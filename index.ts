@@ -15,17 +15,13 @@ const server = Bun.serve({
       return new Response("OK", { status: 200 });
     }
 
-    if (req.method === "GET" && url.pathname === "/historical_chart_data") {
+    if (req.method === "GET" && url.pathname === "/transfers") {
       // Extract query parameters
       const timeInterval = url.searchParams.get("timeInterval");
       const tokenPair = url.searchParams.get("tokenPair");
       const toBlock = url.searchParams.get("toBlock");
       
-      console.log("Extracted parameters:", {
-        timeInterval,
-        tokenPair,
-        toBlock
-      });
+      console.log("Extracted parameters:", { timeInterval, tokenPair, toBlock });
       
       // Validate required parameters
       if (!timeInterval || !tokenPair || !toBlock) {
@@ -43,25 +39,49 @@ const server = Bun.serve({
       }
         
       try {
-        console.time("rt_chart");
+
+        if(tokenPair !== "REN_USDC") {
+          return new Response(
+            JSON.stringify({
+              error: "Invalid token pair",
+              valid: ["REN_USDC"]
+            }),
+            { status: 400, headers: { "Content-Type": "application/json" } }
+          );
+        }
         
+
+        let table = "raw_ren_transfers";
+        
+        if(timeInterval === "1h") { 
+          table = "ren_1h_transfers";
+        }
+        if(timeInterval === "3h") { 
+          table = "ren_3h_transfers";
+        }
+        
+        console.time("clickhouse");
+
         // Build dynamic query based on parameters
         const query = `
-          SELECT * FROM "raw_ren_transfers" 
-          WHERE block_number <= ${parseInt(toBlock)}
-          LIMIT 31 OFFSET 0;
+          SELECT 
+            time_bucket, countMerge(total_transfers) as total_transfers, 
+            sumMerge(total_amount) as total_amount, 
+            avgMerge(avg_amount) as avg_amount, 
+            minMerge(min_amount) as min_amount, 
+            maxMerge(max_amount) as max_amount 
+          FROM "${table}" 
+          GROUP BY time_bucket
+          ORDER BY time_bucket DESC;
         `;
         
         console.log("Executing query:", query);
         
-        const rows = await client.query({
-          query,
-          format: "JSONEachRow",
-        });
+        const rows = await client.query({ query, format: "JSONEachRow" });
+        console.timeLog("clickhouse", "Query executed");
 
-        console.timeLog("rt_chart", "Query executed");
         const data = await rows.json();
-        console.timeEnd("rt_chart");
+        console.timeEnd("clickhouse");
         
         // Return data with metadata
         return new Response(JSON.stringify({
@@ -95,5 +115,5 @@ const server = Bun.serve({
 });
 
 console.log(`Server running on http://localhost:${server.port}`);
-console.log(`Query: http://localhost:${server.port}/historical_chart_data`);
+console.log(`Query: http://localhost:${server.port}/transfers`);
 console.log(`Health: http://localhost:${server.port}/health`);
