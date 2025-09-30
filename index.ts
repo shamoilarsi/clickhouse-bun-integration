@@ -6,7 +6,8 @@ const client = createClient({
   password: process.env.CLICKHOUSE_PASSWORD!,
 });
 
-const server = Bun.serve({
+
+const server: Bun.Server = Bun.serve({
   port: 3000,
   async fetch(req) {
     const url = new URL(req.url);
@@ -18,18 +19,18 @@ const server = Bun.serve({
     if (req.method === "GET" && url.pathname === "/transfers") {
       // Extract query parameters
       const timeInterval = url.searchParams.get("timeInterval");
-      const tokenPair = url.searchParams.get("tokenPair");
+      const token = url.searchParams.get("token");
       const toBlock = url.searchParams.get("toBlock");
       
-      console.log("Extracted parameters:", { timeInterval, tokenPair, toBlock });
+      console.log("Extracted parameters:", { timeInterval, tokenPair: token, toBlock });
       
       // Validate required parameters
-      if (!timeInterval || !tokenPair || !toBlock) {
+      if (!timeInterval || !token || !toBlock) {
         return new Response(
           JSON.stringify({
             error: "Missing required parameters",
             required: ["timeInterval", "tokenPair", "toBlock"],
-            provided: { timeInterval, tokenPair, toBlock }
+            provided: { timeInterval, tokenPair: token, toBlock }
           }),
           { 
             status: 400,
@@ -40,27 +41,27 @@ const server = Bun.serve({
         
       try {
 
-        if(tokenPair !== "REN_USDC") {
+        if(token !== "AAVE") {
           return new Response(
             JSON.stringify({
-              error: "Invalid token pair",
-              valid: ["REN_USDC"]
+              error: "Invalid token",
+              valid: ["AAVE"]
             }),
             { status: 400, headers: { "Content-Type": "application/json" } }
           );
         }
         
 
-        let table = "raw_ren_transfers";
+        let table = "aave_transfers";
         
         if(timeInterval === "1h") { 
-          table = "ren_1h_transfers";
+          table = "aave_1h_transfers";
         }
         if(timeInterval === "3h") { 
-          table = "ren_3h_transfers";
+          table = "aave_3h_transfers";
         }
         
-        console.time("clickhouse");
+        console.time("clickhouse_query");
 
         // Build dynamic query based on parameters
         const query = `
@@ -75,19 +76,19 @@ const server = Bun.serve({
           ORDER BY time_bucket DESC;
         `;
         
-        console.log("Executing query:", query);
+        // console.log("Executing query:", query);
         
         const rows = await client.query({ query, format: "JSONEachRow" });
-        console.timeLog("clickhouse", "Query executed");
+        console.timeLog("clickhouse_query", "Query executed");
 
         const data = await rows.json();
-        console.timeEnd("clickhouse");
+        console.timeEnd("clickhouse_query");
         
         // Return data with metadata
         return new Response(JSON.stringify({
           parameters: {
             timeInterval,
-            tokenPair,
+            tokenPair: token,
             toBlock: parseInt(toBlock)
           },
           data,
@@ -117,3 +118,4 @@ const server = Bun.serve({
 console.log(`Server running on http://localhost:${server.port}`);
 console.log(`Query: http://localhost:${server.port}/transfers`);
 console.log(`Health: http://localhost:${server.port}/health`);
+console.log(`WebSocket: ws://localhost:${server.port}`);
