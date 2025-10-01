@@ -78,7 +78,7 @@ const server: Bun.Server = Bun.serve({
         
         // console.log("Executing query:", query);
         
-        const rows = await client.query({ query, format: "JSONEachRow" });
+        const rows = await client.query({ query });
         console.timeLog("clickhouse_query", "Query executed");
 
         const data = await rows.json();
@@ -91,8 +91,8 @@ const server: Bun.Server = Bun.serve({
             tokenPair: token,
             toBlock: parseInt(toBlock)
           },
-          data,
-          count: data.length
+          data: data.data,
+          count: data.rows
         }), {
           headers: { "Content-Type": "application/json" },
         });
