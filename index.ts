@@ -7,13 +7,26 @@ const client = createClient({
 });
 
 
+// Helper to add CORS headers to any response
+const cors = (response: Response) => {
+  response.headers.set("Access-Control-Allow-Origin", "*");
+  response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  response.headers.set("Access-Control-Allow-Headers", "Content-Type");
+  return response;
+};
+
 const server: Bun.Server = Bun.serve({
   port: 3000,
   async fetch(req) {
     const url = new URL(req.url);
 
+    // Handle preflight OPTIONS requests
+    if (req.method === "OPTIONS") {
+      return cors(new Response(null, { status: 204 }));
+    }
+
     if (req.method === "GET" && url.pathname === "/health") {
-      return new Response("OK", { status: 200 });
+      return cors(new Response("OK", { status: 200 }));
     }
 
     if (req.method === "GET" && url.pathname === "/transfers") {
@@ -26,7 +39,7 @@ const server: Bun.Server = Bun.serve({
       
       // Validate required parameters
       if (!timeInterval || !token || !toBlock) {
-        return new Response(
+        return cors(new Response(
           JSON.stringify({
             error: "Missing required parameters",
             required: ["timeInterval", "tokenPair", "toBlock"],
@@ -36,19 +49,19 @@ const server: Bun.Server = Bun.serve({
             status: 400,
             headers: { "Content-Type": "application/json" }
           }
-        );
+        ));
       }
         
       try {
 
         if(token !== "AAVE") {
-          return new Response(
+          return cors(new Response(
             JSON.stringify({
               error: "Invalid token",
               valid: ["AAVE"]
             }),
             { status: 400, headers: { "Content-Type": "application/json" } }
-          );
+          ));
         }
         
 
@@ -85,7 +98,7 @@ const server: Bun.Server = Bun.serve({
         console.timeEnd("clickhouse_query");
         
         // Return data with metadata
-        return new Response(JSON.stringify({
+        return cors(new Response(JSON.stringify({
           parameters: {
             timeInterval,
             tokenPair: token,
@@ -95,10 +108,10 @@ const server: Bun.Server = Bun.serve({
           count: data.rows
         }), {
           headers: { "Content-Type": "application/json" },
-        });
+        }));
       } catch (error) {
         console.error("Query error:", error);
-        return new Response(
+        return cors(new Response(
           JSON.stringify({
             error: "Query failed",
             message: error instanceof Error ? error.message : "Unknown error"
@@ -107,11 +120,11 @@ const server: Bun.Server = Bun.serve({
             status: 500,
             headers: { "Content-Type": "application/json" }
           }
-        );
+        ));
       }
     }
 
-    return new Response("Not Found", { status: 404 });
+    return cors(new Response("Not Found", { status: 404 }));
   },
 });
 
