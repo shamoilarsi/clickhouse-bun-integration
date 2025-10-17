@@ -96,7 +96,9 @@ const server: Bun.Server = Bun.serve({
             argMaxMerge(last_block_number) as last_block_number,
             quantileMerge(0.5)(median_amount) as median_amount
           FROM "${table}"
-          ${fromTimestamp && toTimestamp ? `WHERE time_bucket >= toDateTime(${fromTimestamp}) AND time_bucket <= toDateTime(${toTimestamp})` : ""}
+          WHERE 1=1
+          ${fromTimestamp ? `AND time_bucket >= toDateTime(${fromTimestamp})` : ""}
+          ${toTimestamp ? `AND time_bucket <= toDateTime(${toTimestamp})` : ""}
           GROUP BY time_bucket
           ${toBlock ? `HAVING last_block_number > ${+toBlock}` : ""}
           ORDER BY last_block_number DESC;
