@@ -100,7 +100,7 @@ const server: Bun.Server = Bun.serve({
           ${fromTimestamp ? `AND time_bucket >= toDateTime(${fromTimestamp})` : ""}
           ${toTimestamp ? `AND time_bucket <= toDateTime(${toTimestamp})` : ""}
           GROUP BY time_bucket
-          ${toBlock ? `HAVING last_block_number > ${+toBlock}` : ""}
+          ${toBlock ? `HAVING last_block_number <= ${+toBlock}` : ""}
           ORDER BY last_block_number DESC;
         `;
 
