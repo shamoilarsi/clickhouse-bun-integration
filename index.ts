@@ -34,16 +34,19 @@ const server: Bun.Server = Bun.serve({
       const timeInterval = url.searchParams.get("timeInterval");
       const token = url.searchParams.get("token");
       const toBlock = url.searchParams.get("toBlock");
+      const fromTimestamp = url.searchParams.get("fromTimestamp"); // in seconds
+      const toTimestamp = url.searchParams.get("toTimestamp"); // in seconds
       
-      console.log("Extracted parameters:", { timeInterval, tokenPair: token, toBlock });
+      console.log("Extracted parameters:", { timeInterval, token, toBlock, fromTimestamp, toTimestamp });
       
       // Validate required parameters
-      if (!timeInterval || !token || !toBlock) {
+      if (!timeInterval || !token) {  
         return cors(new Response(
           JSON.stringify({
             error: "Missing required parameters",
-            required: ["timeInterval", "tokenPair", "toBlock"],
-            provided: { timeInterval, tokenPair: token, toBlock }
+            required: ["timeInterval", "token"],
+            optional: ["toBlock", "fromTimestamp", "toTimestamp"],
+            provided: { timeInterval, token, toBlock, fromTimestamp, toTimestamp }
           }),
           { 
             status: 400,
@@ -56,53 +59,89 @@ const server: Bun.Server = Bun.serve({
 
         if(token !== "AAVE") {
           return cors(new Response(
-            JSON.stringify({
-              error: "Invalid token",
-              valid: ["AAVE"]
-            }),
+            JSON.stringify({ error: "Invalid token", valid: ["AAVE"] }),
             { status: 400, headers: { "Content-Type": "application/json" } }
           ));
         }
         
 
-        let table = "aave_transfers";
+        let table = null;
         
         if(timeInterval === "1h") { 
           table = "aave_1h_transfers";
         }
-        if(timeInterval === "3h") { 
-          table = "aave_3h_transfers";
+        if(timeInterval === "1m") { 
+          table = "aave_1m_transfers";
+        }
+
+        if(!table) {
+          return cors(new Response(
+            JSON.stringify({ error: "Invalid time interval", valid: ["1h", "1m"] }),
+            { status: 400, headers: { "Content-Type": "application/json" } }
+          ));
         }
         
         console.time("clickhouse_query");
 
-        // Build dynamic query based on parameters
         const query = `
           SELECT 
-            time_bucket, countMerge(total_transfers) as total_transfers, 
+            time_bucket, 
+            countMerge(total_transfers) as total_transfers, 
             sumMerge(total_amount) as total_amount, 
             avgMerge(avg_amount) as avg_amount, 
             minMerge(min_amount) as min_amount, 
-            maxMerge(max_amount) as max_amount 
-          FROM "${table}" 
+            maxMerge(max_amount) as max_amount,
+            argMinMerge(open_amount) as open_amount,
+            argMaxMerge(close_amount) as close_amount,
+            argMaxMerge(last_block_number) as last_block_number,
+            quantileMerge(0.5)(median_amount) as median_amount
+          FROM "${table}"
+          ${fromTimestamp && toTimestamp ? `WHERE time_bucket >= toDateTime(${fromTimestamp}) AND time_bucket <= toDateTime(${toTimestamp})` : ""}
           GROUP BY time_bucket
-          ORDER BY time_bucket DESC;
+          ${toBlock ? `HAVING last_block_number > ${+toBlock}` : ""}
+          ORDER BY last_block_number DESC;
         `;
-        
-        // console.log("Executing query:", query);
-        
-        const rows = await client.query({ query });
-        console.timeLog("clickhouse_query", "Query executed");
 
-        const data = await rows.json();
+        console.log("Executing query:", query);
+        
+
+        const maxRetries = 10; // Maximum number of retry attempts
+        const retryDelay = 500; // Delay between retries in milliseconds
+        let attempt = 0;
+        let data: any = null;
+        
+        while (attempt < maxRetries) {
+          attempt++;
+          console.log(`Query attempt ${attempt}/${maxRetries}`);
+          
+          const rows = await client.query({ query });
+          const result = await rows.json();
+          
+          if (result.rows && result.rows > 0) {
+            console.timeLog("clickhouse_query", `Query succeeded on attempt ${attempt}`);
+            data = result;
+            break;
+          }
+
+          if (attempt >= maxRetries) {
+            console.timeLog("clickhouse_query", `Max retries reached (${maxRetries})`);
+            data = result;
+            break;
+          }
+          
+          console.log(`No data found, retrying in ${retryDelay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+        
         console.timeEnd("clickhouse_query");
         
-        // Return data with metadata
         return cors(new Response(JSON.stringify({
           parameters: {
             timeInterval,
             tokenPair: token,
-            toBlock: parseInt(toBlock)
+            toBlock: toBlock ? parseInt(toBlock) : null,
+            fromTimestamp: fromTimestamp ? parseInt(fromTimestamp) : null,
+            toTimestamp: toTimestamp ? parseInt(toTimestamp) : null,
           },
           data: data.data,
           count: data.rows
