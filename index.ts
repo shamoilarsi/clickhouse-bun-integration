@@ -108,7 +108,7 @@ const server: Bun.Server = Bun.serve({
         
 
         const maxRetries = 10; // Maximum number of retry attempts
-        const retryDelay = 500; // Delay between retries in milliseconds
+        const retryDelay = 250; // Delay between retries in milliseconds
         let attempt = 0;
         let data: any = null;
         
