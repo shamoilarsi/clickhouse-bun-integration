@@ -57,21 +57,20 @@ const server: Bun.Server = Bun.serve({
         
       try {
 
-        if(token !== "AAVE") {
+        if(token !== "WBTC") {
           return cors(new Response(
-            JSON.stringify({ error: "Invalid token", valid: ["AAVE"] }),
+            JSON.stringify({ error: "Invalid token", valid: ["WBTC"] }),
             { status: 400, headers: { "Content-Type": "application/json" } }
           ));
         }
-        
 
         let table = null;
         
         if(timeInterval === "1h") { 
-          table = "aave_1h_transfers";
+          table = "wbtc_1h_transfers";
         }
         if(timeInterval === "1m") { 
-          table = "aave_1m_transfers";
+          table = "wbtc_1m_transfers";
         }
 
         if(!table) {
