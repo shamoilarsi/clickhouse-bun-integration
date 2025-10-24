@@ -1,9 +1,23 @@
 import { createClient } from "@clickhouse/client";
 
+type TransferData = {
+  time_bucket: string;
+  total_transfers: number;
+  total_amount: number;
+  avg_amount: number;
+  min_amount: number;
+  max_amount: number;
+  open_amount: number;
+  close_amount: number;
+  last_block_number: number;
+  median_amount: number;
+};
+
 const client = createClient({
   url: process.env.CLICKHOUSE_URL!,
   username: process.env.CLICKHOUSE_USERNAME!,
   password: process.env.CLICKHOUSE_PASSWORD!,
+  clickhouse_settings: { use_query_cache: 0 }
 });
 
 
@@ -31,6 +45,7 @@ const server: Bun.Server = Bun.serve({
 
     if (req.method === "GET" && url.pathname === "/transfers") {
       // Extract query parameters
+      const n = url.searchParams.get("n");
       const timeInterval = url.searchParams.get("timeInterval");
       const token = url.searchParams.get("token");
       const toBlock = url.searchParams.get("toBlock");
@@ -45,8 +60,8 @@ const server: Bun.Server = Bun.serve({
           JSON.stringify({
             error: "Missing required parameters",
             required: ["timeInterval", "token"],
-            optional: ["toBlock", "fromTimestamp", "toTimestamp"],
-            provided: { timeInterval, token, toBlock, fromTimestamp, toTimestamp }
+            optional: ["toBlock", "fromTimestamp", "toTimestamp", "n"],
+            provided: { timeInterval, token, toBlock, fromTimestamp, toTimestamp, n }
           }),
           { 
             status: 400,
@@ -99,7 +114,6 @@ const server: Bun.Server = Bun.serve({
           ${fromTimestamp ? `AND time_bucket >= toDateTime(${fromTimestamp})` : ""}
           ${toTimestamp ? `AND time_bucket <= toDateTime(${toTimestamp})` : ""}
           GROUP BY time_bucket
-          ${toBlock ? `HAVING last_block_number <= ${+toBlock}` : ""}
           ORDER BY last_block_number DESC;
         `;
 
@@ -109,7 +123,7 @@ const server: Bun.Server = Bun.serve({
         const maxRetries = 10; // Maximum number of retry attempts
         const retryDelay = 250; // Delay between retries in milliseconds
         let attempt = 0;
-        let data: any = null;
+        let data: {data: TransferData[], rows: number} = {data: [], rows: 0};
         
         while (attempt < maxRetries) {
           attempt++;
@@ -118,23 +132,52 @@ const server: Bun.Server = Bun.serve({
           const rows = await client.query({ query });
           const result = await rows.json();
           
-          if (result.rows && result.rows > 0) {
+          const hasData = result.rows && result.rows > 0;
+          
+          let blockMatches = true;
+          if (toBlock && hasData && result.data && result.data.length > 0) {
+            // Find the highest index where block number >= toBlock
+            let highestMatchingIndex = -1;
+            for (let i = 0; i < result.data.length; i++) {
+              const blockNumber = (result.data[i] as TransferData).last_block_number;
+              if (+blockNumber >= +toBlock) highestMatchingIndex = i;
+              else break;
+            }
+            
+            if (highestMatchingIndex >= 0) {
+              // Remove all indices after the highest matching index
+              result.data = result.data.slice(highestMatchingIndex);
+              blockMatches = true;
+              console.log(`Highest matching index: ${highestMatchingIndex}, kept ${result.data.length} items, Target block: ${toBlock}`);
+            } else {
+              blockMatches = false;
+              console.log(`No blocks found >= ${toBlock}`);
+            }
+          }
+          
+          if (hasData && blockMatches) {
             console.timeLog("clickhouse_query", `Query succeeded on attempt ${attempt}`);
-            data = result;
+            data = { data: result.data as TransferData[], rows: result.rows as number };
             break;
           }
 
           if (attempt >= maxRetries) {
             console.timeLog("clickhouse_query", `Max retries reached (${maxRetries})`);
-            data = result;
+            data = { data: [], rows: 0 };
             break;
           }
           
-          console.log(`No data found, retrying in ${retryDelay}ms...`);
+          const reason = !hasData ? "No data found" : "Block not reached yet";
+          console.log(`${reason}, retrying in ${retryDelay}ms...`);
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
         
         console.timeEnd("clickhouse_query");
+
+        if(n) {
+          data.data = data.data.slice(0, +n);
+          data.rows = data.data.length;
+        }
         
         return cors(new Response(JSON.stringify({
           parameters: {
@@ -143,6 +186,7 @@ const server: Bun.Server = Bun.serve({
             toBlock: toBlock ? parseInt(toBlock) : null,
             fromTimestamp: fromTimestamp ? parseInt(fromTimestamp) : null,
             toTimestamp: toTimestamp ? parseInt(toTimestamp) : null,
+            n: n ? parseInt(n) : null,
           },
           data: data.data,
           count: data.rows
